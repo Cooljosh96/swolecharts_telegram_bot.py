@@ -1,0 +1,68 @@
+name: SwoleCharts Telegram Alerts
+
+on:
+  workflow_dispatch:
+    inputs:
+      send_test_alert:
+        description: Send a one-time Telegram delivery test before polling
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    # GitHub scheduled workflows have a 5-minute minimum interval.
+    - cron: '*/5 * * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: swolecharts-telegram-alerts
+  cancel-in-progress: false
+
+jobs:
+  alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run SwoleCharts bot for one short session
+        env:
+          SWOLE_TELEGRAM_BOT_TOKEN: ${{ secrets.SWOLE_TELEGRAM_BOT_TOKEN }}
+          SWOLE_TELEGRAM_CHAT_ID: ${{ secrets.SWOLE_TELEGRAM_CHAT_ID }}
+          SWOLE_POLL_SECONDS: '60'
+          SWOLE_RUN_SECONDS: '220'
+          VOLUME_SPIKE_SCAN_SECONDS: '120'
+          MAX_VOLUME_SPIKE_COINS: '10'
+          LONG_SHORT_CHANGE_THRESHOLD: '0.02'
+          FUNDING_CHANGE_THRESHOLD: '0.00005'
+          OI_CHANGE_THRESHOLD: '0.05'
+          SWOLE_SEND_TEST_ALERT: ${{ github.event_name == 'workflow_dispatch' && inputs.send_test_alert == true && 'true' || 'false' }}
+        run: python -u swolecharts_telegram_bot.py
+
+      - name: Commit updated alert state
+        run: |
+          if [ -f data/swolecharts-alert-state.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add data/swolecharts-alert-state.json
+            if ! git diff --cached --quiet; then
+              git commit -m "Update SwoleCharts alert state [skip ci]"
+              git push
+            else
+              echo "Alert state unchanged; nothing to commit."
+            fi
+          else
+            echo "State file not created; check bot logs." >&2
+            exit 1
+          fi
+          
