@@ -110,6 +110,8 @@ class SwoleTelegramBot:
         if not self.dry_run and (not self.token or not self.chat_id):
             raise ValueError("Set SWOLE_TELEGRAM_BOT_TOKEN and SWOLE_TELEGRAM_CHAT_ID, or set DRY_RUN=true for testing.")
         self.poll = env_int("SWOLE_POLL_SECONDS", 120, 30)
+        # GitHub Actions runs must finish before the job timeout.
+        self.run_seconds = env_int("SWOLE_RUN_SECONDS", 150, 30)
         self.timeout = env_int("REQUEST_TIMEOUT_SECONDS", 20, 5)
         self.max_spike_coins = env_int("MAX_VOLUME_SPIKE_COINS", 20, 1)
         self.spike_scan_seconds = env_int("VOLUME_SPIKE_SCAN_SECONDS", 180, 60)
@@ -279,14 +281,17 @@ class SwoleTelegramBot:
     def run(self) -> None:
         signal.signal(signal.SIGTERM, self.stop_handler)
         signal.signal(signal.SIGINT, self.stop_handler)
-        log.info("SwoleCharts alerts started; polling every %ss", self.poll)
+        started = time.monotonic()
+        deadline = started + self.run_seconds
+        log.info("SwoleCharts alerts started; polling every %ss for at most %ss", self.poll, self.run_seconds)
         if self.dry_run: log.warning("DRY_RUN=true; messages will be logged only")
-        while not self.stop:
+        while not self.stop and time.monotonic() < deadline:
             start = time.monotonic()
             first_run = not bool(self.state.get("initialized"))
             try:
+                # Focused mode: keep new-listing and volume-spike alerts only.
+                # Skip funding, open-interest, and long/short-ratio checks.
                 self.check_listings(first_run)
-                self.check_metrics(first_run)
                 if time.time() - self.last_spike_scan >= self.spike_scan_seconds:
                     self.check_volume_spikes(first_run)
                     self.last_spike_scan = time.time()
@@ -294,12 +299,15 @@ class SwoleTelegramBot:
                 self.save()
             except Exception:
                 log.exception("Polling cycle failed; retrying next cycle")
-            sleep_for = max(1, self.poll - int(time.monotonic() - start))
+            # Sleep only within the remaining session budget.
+            remaining = int(deadline - time.monotonic())
+            if remaining <= 0: break
+            sleep_for = min(remaining, max(1, self.poll - int(time.monotonic() - start)))
             for _ in range(sleep_for):
-                if self.stop: break
+                if self.stop or time.monotonic() >= deadline: break
                 time.sleep(1)
         self.save()
-        log.info("Bot stopped")
+        log.info("Bot session finished; saved alert state")
 
     def stop_handler(self, _signum: int, _frame: Any) -> None:
         self.stop = True
@@ -314,4 +322,3 @@ if __name__ == "__main__":
     except (ValueError, RuntimeError) as exc:
         log.error("%s", exc)
         raise SystemExit(2) from exc
-  
