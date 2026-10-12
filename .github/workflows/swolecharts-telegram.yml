@@ -9,7 +9,6 @@ on:
         type: boolean
         default: false
   schedule:
-    # GitHub scheduled workflows have a 5-minute minimum interval.
     - cron: '*/5 * * * *'
 
 permissions:
@@ -22,7 +21,7 @@ concurrency:
 jobs:
   alerts:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 4
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -35,14 +34,15 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Run SwoleCharts bot for one short session
+      - name: Run SwoleCharts bot for a bounded session
         env:
           SWOLE_TELEGRAM_BOT_TOKEN: ${{ secrets.SWOLE_TELEGRAM_BOT_TOKEN }}
           SWOLE_TELEGRAM_CHAT_ID: ${{ secrets.SWOLE_TELEGRAM_CHAT_ID }}
-          SWOLE_POLL_SECONDS: '60'
-          SWOLE_RUN_SECONDS: '220'
+          SWOLE_POLL_SECONDS: '45'
+          SWOLE_RUN_SECONDS: '150'
+          REQUEST_TIMEOUT_SECONDS: '10'
           VOLUME_SPIKE_SCAN_SECONDS: '120'
-          MAX_VOLUME_SPIKE_COINS: '10'
+          MAX_VOLUME_SPIKE_COINS: '5'
           LONG_SHORT_CHANGE_THRESHOLD: '0.02'
           FUNDING_CHANGE_THRESHOLD: '0.00005'
           OI_CHANGE_THRESHOLD: '0.05'
