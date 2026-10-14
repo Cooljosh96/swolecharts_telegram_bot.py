@@ -271,7 +271,11 @@ class SwoleTelegramBot:
                     f"Charts: {chart_links(symbol, venue)}")
                 self.alert(f"spike:{key}", message, cooldown=0)
         self.state["seen_spikes"] = list(seen)[-5000:]
-
+if isinstance(item, dict) and str(item.get("kind", "")).lower() == "volume":
+    log.info(
+        "VOLUME DEBUG: %s",
+        json.dumps(item, ensure_ascii=False)
+    )
     def save(self) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         temp = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
