@@ -21,7 +21,7 @@ concurrency:
 jobs:
   alerts:
     runs-on: ubuntu-latest
-    timeout-minutes: 285
+    timeout-minutes: 5
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
