@@ -21,7 +21,7 @@ concurrency:
 jobs:
   alerts:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 5
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -39,9 +39,9 @@ jobs:
           SWOLE_TELEGRAM_BOT_TOKEN: ${{ secrets.SWOLE_TELEGRAM_BOT_TOKEN }}
           SWOLE_TELEGRAM_CHAT_ID: ${{ secrets.SWOLE_TELEGRAM_CHAT_ID }}
           SWOLE_POLL_SECONDS: '45'
-          SWOLE_RUN_SECONDS: '150'
+          SWOLE_RUN_SECONDS: '240'
           REQUEST_TIMEOUT_SECONDS: '10'
-          VOLUME_SPIKE_SCAN_SECONDS: '120'
+          VOLUME_SPIKE_SCAN_SECONDS: '12'
           MAX_VOLUME_SPIKE_COINS: '5'
           LONG_SHORT_CHANGE_THRESHOLD: '0.02'
           FUNDING_CHANGE_THRESHOLD: '0.00005'
