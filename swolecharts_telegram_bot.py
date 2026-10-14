@@ -105,7 +105,10 @@ def chart_links(symbol: str, venue: str) -> str:
     )
 
 
-def volume_summary(item: dict[str, Any]) -> list[str]:
+def volume_summary(
+    item: dict[str, Any],
+    market_24h_volume: float | None = None,
+) -> list[str]:
     """Format volume figures only if compatible fields are present in the API."""
     added = first_number(item, (
         "volume_added_usd", "volumeAddedUsd", "vol_added_usd",
@@ -144,8 +147,15 @@ def volume_summary(item: dict[str, Any]) -> list[str]:
             lines.append(f"Volume increase: <b>{(delta / previous) * 100:+.2f}%</b>")
         return lines
 
+    # Fall back to the matching market's 24-hour volume when available.
+    if market_24h_volume is not None:
+        return [f"24h market volume: <b>{usd(market_24h_volume)}</b>"]
+
     # A signal score is not a volume amount; don't fabricate dollar values.
-    return ["Volume added: <i>not supplied in this API alert</i>"]
+    return [
+        "24h market volume: <i>not available</i>",
+        "Volume added: <i>not supplied by the API</i>",
+    ]
 
 
 class Http:
@@ -374,6 +384,28 @@ class SwoleTelegramBot:
     def check_volume_spikes(self, first_run: bool) -> None:
         payload = self.api("/markets")
         coins = payload.get("coins", []) if isinstance(payload, dict) else []
+
+        # Match each perpetual market to its own 24-hour volume.
+        market_volumes: dict[str, float] = {}
+        for coin in coins:
+            if not isinstance(coin, dict):
+                continue
+            for market in coin.get("perps", []) or []:
+                if not isinstance(market, dict):
+                    continue
+                market_venue = str(market.get("venue", "")).lower()
+                if market_venue not in {"binance", "bybit"}:
+                    continue
+                market_symbol = str(
+                    market.get("symbol") or f"{coin.get('base', '')}USDT"
+                ).upper()
+                market_volume = first_number(market, (
+                    "vol24h", "vol_24h", "volume24h", "volume_24h",
+                    "quoteVolume", "quote_volume", "perp_vol24h",
+                ))
+                if market_symbol and market_volume is not None and market_volume >= 0:
+                    market_volumes[f"{market_venue}:{market_symbol}"] = market_volume
+
         ranked = []
         for coin in coins:
             if isinstance(coin, dict) and coin.get("base"):
@@ -443,7 +475,13 @@ class SwoleTelegramBot:
 
                 ts = int(number(item.get("ts")))
                 age_minutes = max(0, int(time.time() - ts / 1000) // 60) if ts else 0
-                volume_lines = volume_summary(item)
+                market_24h_volume = market_volumes.get(
+                    f"{venue}:{symbol.upper()}"
+                )
+                volume_lines = volume_summary(
+                    item,
+                    market_24h_volume=market_24h_volume,
+                )
                 message = (
                     f"⚡ <b>SwoleCharts volume spike — {venue.title()}</b>\n\n"
                     f"<b>{esc(symbol)}</b>\n"
