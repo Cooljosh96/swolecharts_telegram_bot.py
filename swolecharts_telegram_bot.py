@@ -252,8 +252,22 @@ class SwoleTelegramBot:
             except Exception as exc:
                 log.warning("Skipping volume spikes for %s: %s", base, exc)
                 continue
+            
+            for item in alerts:
             alerts = coin_data.get("alerts", []) if isinstance(coin_data, dict) else []
             for item in alerts:
+                if not isinstance(item, dict) or str(item.get("kind", "")).lower() != "volume":
+                    continue
+
+                log.info(
+                    "SwoleCharts volume alert payload sample: %s",
+                    json.dumps(item, ensure_ascii=False),
+                )
+
+                venue = str(item.get("venue", "")).lower()
+                if venue not in {"binance", "bybit"}:
+                    continue
+
                 if not isinstance(item, dict) or str(item.get("kind", "")).lower() != "volume": continue
                 venue = str(item.get("venue", "")).lower()
                 if venue not in {"binance", "bybit"}: continue
