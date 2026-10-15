@@ -1,44 +1,43 @@
+
 name: SwoleCharts Telegram Alerts
 
 on:
-workflow_dispatch:
-inputs:
-send_test_alert:
-description: Send a one-time Telegram delivery test
-required: false
-type: boolean
-default: false
-schedule:
-- cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      send_test_alert:
+        description: Send a one-time Telegram delivery test
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: "*/5 * * * *"
 
 permissions:
-contents: write
+  contents: write
 
 concurrency:
-group: swolecharts-telegram-alerts
-cancel-in-progress: false
+  group: swolecharts-telegram-alerts
+  cancel-in-progress: false
 
 jobs:
-run-bot:
-runs-on: ubuntu-latest
-timeout-minutes: 5
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
 
-steps:
-  - name: Check out repository
-    uses: actions/checkout@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
 
-  - name: Set up Python
-    uses: actions/setup-python@v5
-    with:
-      python-version: '3.12'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-  - name: Install dependencies
-    run: |
-      python -m pip install --upgrade pip
-
-  - name: Run SwoleCharts bot
-    env:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      SEND_TEST_ALERT: ${{ inputs.send_test_alert }}
-    run: python swolecharts_telegram_bot.py
+      - name: Run SwoleCharts bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SEND_TEST_ALERT: ${{ inputs.send_test_alert }}
+        run: python swolecharts_telegram_bot.py
