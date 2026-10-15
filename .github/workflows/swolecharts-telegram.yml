@@ -1,68 +1,26 @@
-name: SwoleCharts Telegram Alerts
+name: SwoleCharts Telegram Bot
 
 on:
 workflow_dispatch:
-inputs:
-send_test_alert:
-description: Send a one-time Telegram delivery test before polling
-required: false
-type: boolean
-default: false
 schedule:
-- cron: '0 */5 * * *'
-
-permissions:
-contents: write
-
-concurrency:
-group: swolecharts-telegram-alerts
-cancel-in-progress: false
+- cron: "*/5 * * * *"
 
 jobs:
-alerts:
+run-bot:
 runs-on: ubuntu-latest
-timeout-minutes: 285
+timeout-minutes: 5
 
 steps:
-  - name: Check out repository
+  - name: Checkout repository
     uses: actions/checkout@v4
-    with:
-      ref: ${{ github.ref }}
-      token: ${{ secrets.GITHUB_TOKEN }}
 
   - name: Set up Python
     uses: actions/setup-python@v5
     with:
-      python-version: '3.12'
+      python-version: "3.12"
 
-  - name: Run SwoleCharts bot for a bounded session
+  - name: Run SwoleCharts bot
     env:
-      SWOLE_TELEGRAM_BOT_TOKEN: ${{ secrets.SWOLE_TELEGRAM_BOT_TOKEN }}
-      SWOLE_TELEGRAM_CHAT_ID: ${{ secrets.SWOLE_TELEGRAM_CHAT_ID }}
-      SWOLE_POLL_SECONDS: '45'
-      SWOLE_RUN_SECONDS: '16500'
-      REQUEST_TIMEOUT_SECONDS: '10'
-      VOLUME_SPIKE_SCAN_SECONDS: '120'
-      MAX_VOLUME_SPIKE_COINS: '5'
-      LONG_SHORT_CHANGE_THRESHOLD: '0.02'
-      FUNDING_CHANGE_THRESHOLD: '0.00005'
-      OI_CHANGE_THRESHOLD: '0.05'
-      SWOLE_SEND_TEST_ALERT: ${{ github.event_name == 'workflow_dispatch' && inputs.send_test_alert == true && 'true' || 'false' }}
-    run: python -u swolecharts_telegram_bot.py
-
-  - name: Commit updated alert state
-    run: |
-      if [ -f data/swolecharts-alert-state.json ]; then
-        git config user.name "github-actions[bot]"
-        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git add data/swolecharts-alert-state.json
-        if ! git diff --cached --quiet; then
-          git commit -m "Update SwoleCharts alert state [skip ci]"
-          git push
-        else
-          echo "Alert state unchanged; nothing to commit."
-        fi
-      else
-        echo "State file not created; check bot logs." >&2
-        exit 1
-      fi
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    run: python swolecharts_telegram_bot.py
