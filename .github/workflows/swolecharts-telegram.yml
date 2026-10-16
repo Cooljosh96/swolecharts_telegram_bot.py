@@ -36,8 +36,9 @@ jobs:
           python-version: "3.12"
 
       - name: Run SwoleCharts bot
+        
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SEND_TEST_ALERT: ${{ inputs.send_test_alert }}
+          SWOLE_TELEGRAM_BOT_TOKEN: ${{ secrets.SWOLE_TELEGRAM_BOT_TOKEN }}
+          SWOLE_TELEGRAM_CHAT_ID: ${{ secrets.SWOLE_TELEGRAM_CHAT_ID }}
+          DRY_RUN: "false"
         run: python swolecharts_telegram_bot.py
