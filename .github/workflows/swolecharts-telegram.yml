@@ -22,7 +22,7 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -36,9 +36,34 @@ jobs:
           python-version: "3.12"
 
       - name: Run SwoleCharts bot
-        
         env:
           SWOLE_TELEGRAM_BOT_TOKEN: ${{ secrets.SWOLE_TELEGRAM_BOT_TOKEN }}
           SWOLE_TELEGRAM_CHAT_ID: ${{ secrets.SWOLE_TELEGRAM_CHAT_ID }}
           DRY_RUN: "false"
-        run: python swolecharts_telegram_bot.py
+
+          SWOLE_POLL_SECONDS: "60"
+          SWOLE_RUN_SECONDS: "270"
+          VOLUME_SPIKE_SCAN_SECONDS: "120"
+          MAX_VOLUME_SPIKE_COINS: "50"
+          MAX_SPIKE_ALERTS_PER_RUN: "10"
+          VOLUME_SPIKE_COOLDOWN_SECONDS: "1800"
+
+        run: python -u swolecharts_telegram_bot.py
+
+      - name: Save alert state to repository
+        if: always()
+        run: |
+          if [ -f data/swolecharts-alert-state.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -f data/swolecharts-alert-state.json
+
+            if ! git diff --cached --quiet; then
+              git commit -m "Update SwoleCharts alert state"
+              git push origin HEAD:main
+            else
+              echo "Alert state unchanged; no commit needed."
+            fi
+          else
+            echo "Alert state file not found; nothing to save."
+          fi
