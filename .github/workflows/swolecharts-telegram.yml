@@ -21,7 +21,7 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 290
 
     steps:
       - name: Checkout repository
@@ -41,10 +41,10 @@ jobs:
           DRY_RUN: "false"
 
           SWOLE_POLL_SECONDS: "60"
-          SWOLE_RUN_SECONDS: "270"
+          SWOLE_RUN_SECONDS: "17100"
           VOLUME_SPIKE_SCAN_SECONDS: "120"
           MAX_VOLUME_SPIKE_COINS: "50"
-          MAX_SPIKE_ALERTS_PER_RUN: "10"
+          MAX_SPIKE_ALERTS_PER_RUN: "50"
           VOLUME_SPIKE_COOLDOWN_SECONDS: "1800"
 
         run: python -u swolecharts_telegram_bot.py
