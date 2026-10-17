@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """SwoleCharts market-data alerts delivered to a separate Telegram bot.
 
-Uses the public SwoleCharts JSON API and Python standard library only.
-Adds volume-spike deduplication, a per-run alert cap, and best-effort volume
-amounts when the API response provides compatible numeric fields.
+Preserves the existing API, Telegram credentials, state format, listing alerts,
+and volume-event deduplication. Volume alerts are spread more fairly across
+coins: a successful alert for a coin ends processing for that coin in the
+current run, and coin order is rotated between scans to reduce BTC dominance.
+
+Configure through environment variables; see notes after the script.
 """
 from __future__ import annotations
 
@@ -147,11 +150,9 @@ def volume_summary(
             lines.append(f"Volume increase: <b>{(delta / previous) * 100:+.2f}%</b>")
         return lines
 
-    # Fall back to the matching market's 24-hour volume when available.
     if market_24h_volume is not None:
         return [f"24h market volume: <b>{usd(market_24h_volume)}</b>"]
 
-    # A signal score is not a volume amount; don't fabricate dollar values.
     return [
         "24h market volume: <i>not available</i>",
         "Volume added: <i>not supplied by the API</i>",
@@ -164,7 +165,7 @@ class Http:
 
     def get_json(self, url: str) -> Any:
         req = Request(url, headers={
-            "User-Agent": "swolecharts-telegram-alerts/1.1",
+            "User-Agent": "swolecharts-telegram-alerts/1.2",
             "Accept": "application/json",
         })
         try:
@@ -180,7 +181,7 @@ class Http:
         req = Request(
             url, data=urlencode(values).encode(),
             headers={
-                "User-Agent": "swolecharts-telegram-alerts/1.1",
+                "User-Agent": "swolecharts-telegram-alerts/1.2",
                 "Content-Type": "application/x-www-form-urlencoded",
             },
             method="POST",
@@ -206,14 +207,14 @@ class SwoleTelegramBot:
                 "or set DRY_RUN=true for testing."
             )
 
-        self.poll = env_int("SWOLE_POLL_SECONDS", 120, 30)
-        self.run_seconds = env_int("SWOLE_RUN_SECONDS", 150, 30)
+        self.poll = env_int("SWOLE_POLL_SECONDS", 60, 30)
+        self.run_seconds = env_int("SWOLE_RUN_SECONDS", 270, 30)
         self.timeout = env_int("REQUEST_TIMEOUT_SECONDS", 20, 5)
-        self.max_spike_coins = env_int("MAX_VOLUME_SPIKE_COINS", 20, 1)
-        self.spike_scan_seconds = env_int("VOLUME_SPIKE_SCAN_SECONDS", 180, 60)
+        self.max_spike_coins = env_int("MAX_VOLUME_SPIKE_COINS", 50, 1)
+        self.spike_scan_seconds = env_int("VOLUME_SPIKE_SCAN_SECONDS", 120, 60)
         self.metric_cooldown = env_int("METRIC_ALERT_COOLDOWN_SECONDS", 1800, 0)
         self.spike_cooldown = env_int("VOLUME_SPIKE_COOLDOWN_SECONDS", 1800, 0)
-        self.max_spike_alerts_per_run = env_int("MAX_SPIKE_ALERTS_PER_RUN", 5, 1)
+        self.max_spike_alerts_per_run = env_int("MAX_SPIKE_ALERTS_PER_RUN", 10, 1)
 
         self.ls_threshold = env_float("LONG_SHORT_CHANGE_THRESHOLD", 0.02)
         self.funding_threshold = env_float("FUNDING_CHANGE_THRESHOLD", 0.00005)
@@ -229,6 +230,7 @@ class SwoleTelegramBot:
             "funding": {},
             "last_alerts": {},
             "spike_last_sent": {},
+            "coin_rotation_offset": 0,
         }
         if self.state_path.exists():
             try:
@@ -311,7 +313,6 @@ class SwoleTelegramBot:
         self.state["seen_listings"] = list(seen)[-3000:]
 
     def check_metrics(self, first_run: bool) -> None:
-        # Retained for compatibility; focused mode below doesn't call this.
         markets_payload = self.api("/markets")
         markets = markets_payload.get("coins", []) if isinstance(markets_payload, dict) else []
         long_short_payload = self.api("/long-short")
@@ -384,8 +385,10 @@ class SwoleTelegramBot:
     def check_volume_spikes(self, first_run: bool) -> None:
         payload = self.api("/markets")
         coins = payload.get("coins", []) if isinstance(payload, dict) else []
+        if not isinstance(coins, list):
+            log.warning("Unexpected /markets response; coins list missing")
+            return
 
-        # Match each perpetual market to its own 24-hour volume.
         market_volumes: dict[str, float] = {}
         for coin in coins:
             if not isinstance(coin, dict):
@@ -406,16 +409,39 @@ class SwoleTelegramBot:
                 if market_symbol and market_volume is not None and market_volume >= 0:
                     market_volumes[f"{market_venue}:{market_symbol}"] = market_volume
 
-        ranked = []
+        ranked: list[tuple[float, str]] = []
         for coin in coins:
-            if isinstance(coin, dict) and coin.get("base"):
-                ranked.append((number(coin.get("perp_vol24h")), str(coin["base"]).upper()))
+            if not isinstance(coin, dict) or not coin.get("base"):
+                continue
+            base = str(coin["base"]).upper()
+            if base in {"BTC"}:
+                continue  # Keep BTC signals out of this altcoin-focused volume alert feed.
+            ranked.append((number(coin.get("perp_vol24h")), base))
         ranked.sort(reverse=True)
+
+        if not ranked:
+            log.warning("No eligible altcoins found in /markets response")
+            return
+
+        # Rotate the scan starting point between sessions/scans so the same
+        # highest-volume coins don't always consume the limited API/alert budget.
+        offset = int(self.state.get("coin_rotation_offset", 0) or 0) % len(ranked)
+        rotated = ranked[offset:] + ranked[:offset]
+        candidates = rotated[:self.max_spike_coins]
+        self.state["coin_rotation_offset"] = (offset + len(candidates)) % len(ranked)
 
         seen = set(self.state.setdefault("seen_spikes", []))
         spike_last_sent = self.state.setdefault("spike_last_sent", {})
+        alerted_bases_this_run: set[str] = set()
 
-        for _, base in ranked[:self.max_spike_coins]:
+        log.info(
+            "Volume scan: %s market coins; %s eligible altcoins; checking %s (BTC excluded)",
+            len(coins), len(ranked), len(candidates),
+        )
+
+        for _, base in candidates:
+            if base in alerted_bases_this_run:
+                continue
             if self.spike_alerts_sent_this_run >= self.max_spike_alerts_per_run:
                 log.info(
                     "Reached MAX_SPIKE_ALERTS_PER_RUN=%s; skipping remaining volume alerts this run",
@@ -436,7 +462,6 @@ class SwoleTelegramBot:
                 if not isinstance(item, dict) or str(item.get("kind", "")).lower() != "volume":
                     continue
 
-                # Log one sample per run to identify actual API volume fields.
                 if not self.logged_volume_schema:
                     log.info(
                         "SwoleCharts volume alert payload sample: %s",
@@ -450,8 +475,6 @@ class SwoleTelegramBot:
                 symbol = str(item.get("symbol") or f"{base}USDT")
                 direction = str(item.get("dir", "unknown")).strip().lower()
                 spike_id = item.get("id")
-
-                # Exact event ID prevents the exact same API event from repeating.
                 event_key = (
                     f"{venue}:{spike_id}"
                     if spike_id is not None
@@ -460,12 +483,10 @@ class SwoleTelegramBot:
                 if event_key in seen:
                     continue
 
-                # First run seeds existing events without flooding the chat.
                 if first_run:
                     seen.add(event_key)
                     continue
 
-                # Stable cooldown key suppresses fresh IDs for the same symbol/direction.
                 cooldown_key = f"{venue}:{symbol}:{direction}"
                 now = int(time.time())
                 last_sent = int(spike_last_sent.get(cooldown_key, 0) or 0)
@@ -475,13 +496,8 @@ class SwoleTelegramBot:
 
                 ts = int(number(item.get("ts")))
                 age_minutes = max(0, int(time.time() - ts / 1000) // 60) if ts else 0
-                market_24h_volume = market_volumes.get(
-                    f"{venue}:{symbol.upper()}"
-                )
-                volume_lines = volume_summary(
-                    item,
-                    market_24h_volume=market_24h_volume,
-                )
+                market_24h_volume = market_volumes.get(f"{venue}:{symbol.upper()}")
+                volume_lines = volume_summary(item, market_24h_volume=market_24h_volume)
                 message = (
                     f"⚡ <b>SwoleCharts volume spike — {venue.title()}</b>\n\n"
                     f"<b>{esc(symbol)}</b>\n"
@@ -496,6 +512,9 @@ class SwoleTelegramBot:
                     seen.add(event_key)
                     spike_last_sent[cooldown_key] = now
                     self.spike_alerts_sent_this_run += 1
+                    alerted_bases_this_run.add(base)
+                    log.info("Volume alert sent for base=%s symbol=%s venue=%s", base, symbol, venue)
+                    break
 
         self.state["seen_spikes"] = list(seen)[-5000:]
         if len(spike_last_sent) > 3000:
@@ -523,7 +542,6 @@ class SwoleTelegramBot:
             start = time.monotonic()
             first_run = not bool(self.state.get("initialized"))
             try:
-                # Focused mode: listings and volume-spike alerts only.
                 self.check_listings(first_run)
                 if time.time() - self.last_spike_scan >= self.spike_scan_seconds:
                     self.check_volume_spikes(first_run)
