@@ -25,30 +25,7 @@ jobs:
 
     steps:
     
-      - name: Test Bybit alternative API
-        run: |
-          python - <<'PY'
-          import urllib.request
-          import json
-
-          url = "https://api.bytick.com/v5/market/tickers?category=linear&symbol=BTCUSDT"
-
-          try:
-              req = urllib.request.Request(
-                  url,
-                  headers={"User-Agent": "Mozilla/5.0"}
-              )
-              with urllib.request.urlopen(req, timeout=15) as r:
-                  data = json.loads(r.read().decode())
-
-              print("HTTP request succeeded")
-              print("retCode:", data.get("retCode"))
-              print("retMsg:", data.get("retMsg"))
-              print("Ticker returned:", bool(data.get("result", {}).get("list")))
-          except Exception as e:
-              print("BYBIT TEST FAILED:", repr(e))
-              raise
-          PY
+  
 
       - name: Checkout repository
         uses: actions/checkout@v4
