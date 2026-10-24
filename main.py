@@ -27,7 +27,12 @@ BINANCE_API_FALLBACKS = (
     "https://api2.binance.com",
     "https://api3.binance.com",
 )
-BYBIT_API_BASE = "https://api.bybit.com"
+BYBIT_API_BASES = (
+    "https://api.bybit.com",
+    # Alternative official Bybit mainnet API hostname; useful when the primary
+    # hostname is blocked by the hosting provider or network.
+    "https://api.bytick.com",
+)
 TELEGRAM_API_BASE = "https://api.telegram.org"
 DEFAULT_STATE_FILE = "data/binance-alert-state.json"
 USER_AGENT = "multi-exchange-volume-alert-bot/2.0"
@@ -283,16 +288,30 @@ class BybitClient:
 
     def __init__(self, http: HttpClient) -> None:
         self.http = http
+        # Try the standard hostname first, then the alternative official hostname.
+        # This is especially important when a GitHub Actions runner receives HTTP 403.
+        self.base_urls = BYBIT_API_BASES
 
     def _get_result(self, path: str) -> list[dict[str, Any]]:
-        payload = self.http.get_json(f"{BYBIT_API_BASE}{path}")
-        if not isinstance(payload, dict) or payload.get("retCode") != 0:
-            raise RuntimeError(f"Bybit returned an unexpected response: {str(payload)[:300]}")
-        result = payload.get("result")
-        rows = result.get("list") if isinstance(result, dict) else None
-        if not isinstance(rows, list):
-            raise RuntimeError("Bybit response did not contain a result list")
-        return [row for row in rows if isinstance(row, dict)]
+        errors = []
+        for base_url in self.base_urls:
+            try:
+                payload = self.http.get_json(f"{base_url}{path}")
+                if not isinstance(payload, dict) or payload.get("retCode") != 0:
+                    raise RuntimeError(
+                        f"Bybit returned an unexpected response: {str(payload)[:300]}"
+                    )
+                result = payload.get("result")
+                rows = result.get("list") if isinstance(result, dict) else None
+                if not isinstance(rows, list):
+                    raise RuntimeError("Bybit response did not contain a result list")
+                if base_url != self.base_urls[0]:
+                    logger.info("Bybit API fallback succeeded using %s", base_url)
+                return [row for row in rows if isinstance(row, dict)]
+            except RuntimeError as exc:
+                errors.append(f"{base_url}: {exc}")
+                logger.warning("Bybit endpoint failed (%s): %s", base_url, exc)
+        raise RuntimeError("All Bybit API endpoints failed. " + " | ".join(errors))
 
     def usdt_perpetual_tickers(self) -> dict[str, dict[str, Any]]:
         rows = self._get_result("/v5/market/tickers?category=linear")
@@ -560,8 +579,9 @@ class AlertBot:
                 bybit_state["initialized_at"] = bybit_state.get("initialized_at") or now
                 logger.info("Bybit: checked %d USDT perpetual tickers", len(bybit_tickers))
             except Exception as exc:
-                # Bybit failures do not stop Binance scanning.
-                logger.exception("Bybit scan failed; Binance scan completed: %s", exc)
+                # Bybit failures do not stop Binance scanning. Avoid a huge traceback
+                # every polling cycle; log a concise reason while retaining both endpoint errors.
+                logger.error("Bybit scan failed; Binance scan completed: %s", exc)
 
         self.state.save()
         logger.info(
